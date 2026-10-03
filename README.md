@@ -143,3 +143,15 @@ GitHub never returns secret values, so each secret is verified by checking
 that its `updatedAt` changed. Variables are verified by reading their values
 back. The script continues past failures, then exits non-zero if any
 repository failed.
+
+## Dispatch every mirror
+
+Dispatch `mirror.yml` on `main` in every listed repository, for example after
+rotating `REPO_MIRROR`:
+
+```sh
+python3 scripts/run_mirrors.py --repos mirrors.txt
+```
+
+It prints each run's URL and does not wait for results. A run that finds no
+changes skips the authenticated push, so it does not test a new token.

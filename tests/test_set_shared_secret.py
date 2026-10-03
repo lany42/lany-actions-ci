@@ -6,13 +6,13 @@
 import argparse
 import getpass
 import json
-import subprocess
 import warnings
 from unittest.mock import Mock
 
 import pytest
 
 import set_shared_secret as shared
+from gh_repos import RepoError
 
 SECRET = "github_pat_example"
 
@@ -32,7 +32,7 @@ class FakeGh:
         self.calls.append((args, stdin))
         command, repo = args[:2], args[args.index("--repo") + 1]
         if repo in self.broken:
-            raise shared.SettingError("HTTP 404: Not Found")
+            raise RepoError("HTTP 404: Not Found")
         if command == ("secret", "list"):
             stored = self.secrets.get(repo, {})
             return json.dumps([{"name": k, "updatedAt": v} for k, v in stored.items()])
@@ -50,44 +50,11 @@ class FakeGh:
         raise AssertionError(f"unexpected gh call {args}")
 
 
-@pytest.fixture(autouse=True)
-def no_real_gh(monkeypatch):
-    # A real gh call could change live repositories.
-    def forbid(*args, **kwargs):
-        pytest.fail("Tests must not run the real gh CLI")
-
-    monkeypatch.setattr(shared.subprocess, "run", forbid)
-
-
 @pytest.fixture
 def fake_gh(monkeypatch):
     fake = FakeGh()
     monkeypatch.setattr(shared, "gh", fake)
     return fake
-
-
-@pytest.fixture
-def repos_file(tmp_path):
-    def write(text):
-        path = tmp_path / "repos.txt"
-        path.write_text(text)
-        return path
-
-    return write
-
-
-def test_gh_passes_values_on_stdin_and_reports_failures(monkeypatch):
-    run = Mock(return_value=subprocess.CompletedProcess([], 0, "out", ""))
-    monkeypatch.setattr(shared.subprocess, "run", run)
-    assert shared.gh("secret", "set", "X", stdin=SECRET) == "out"
-    assert run.call_args.args == (["gh", "secret", "set", "X"],)
-    assert run.call_args.kwargs["input"] == SECRET
-    run.return_value = subprocess.CompletedProcess([], 1, "", "HTTP 404")
-    with pytest.raises(shared.SettingError, match="HTTP 404"):
-        shared.gh("secret", "list")
-    run.side_effect = FileNotFoundError("gh")
-    with pytest.raises(shared.SettingError, match="Cannot run gh"):
-        shared.gh("secret", "list")
 
 
 def test_names_are_stored_uppercase():
@@ -101,28 +68,6 @@ def test_names_are_stored_uppercase():
 def test_invalid_names(name):
     with pytest.raises(argparse.ArgumentTypeError):
         shared.setting_name(name)
-
-
-def test_comments_blanks_duplicates_and_owner(monkeypatch, repos_file):
-    gh = Mock(return_value="lany42\n")
-    monkeypatch.setattr(shared, "gh", gh)
-    repos = shared.read_repos(repos_file("# mirrors\n\n  a  \nother/b\na\nlany42/a\n"))
-    gh.assert_called_once_with("api", "user", "--jq", ".login")
-    assert repos == ["lany42/a", "other/b"]
-
-
-def test_explicit_owner_skips_lookup(fake_gh, repos_file):
-    repos = shared.read_repos(repos_file("a\nghe.example/org/b\n"), "me")
-    assert fake_gh.calls == []
-    assert repos == ["me/a", "ghe.example/org/b"]
-
-
-@pytest.mark.parametrize(
-    "text", ["", "# none\n\n", "a b\n", "-R\n", "a//b\n", "a/b/c/d\n"]
-)
-def test_invalid_or_empty_lists(fake_gh, repos_file, text):
-    with pytest.raises(shared.SettingError):
-        shared.read_repos(repos_file(text), "me")
 
 
 def test_secret_goes_through_stdin_and_is_verified(fake_gh):
@@ -142,7 +87,7 @@ def test_new_secret_is_verified(fake_gh):
 def test_unchanged_or_missing_secret_fails(fake_gh, stored, message):
     fake_gh.frozen.add("o/r")
     fake_gh.secrets["o/r"] = stored
-    with pytest.raises(shared.SettingError, match=message):
+    with pytest.raises(RepoError, match=message):
         shared.set_secret("o/r", "OLD", SECRET)
 
 
@@ -154,7 +99,7 @@ def test_variable_reads_back_value(fake_gh):
 def test_variable_mismatch_fails(fake_gh):
     fake_gh.frozen.add("o/r")
     fake_gh.variables[("o/r", "X")] = "old"
-    with pytest.raises(shared.SettingError, match="reads back 'old'"):
+    with pytest.raises(RepoError, match="reads back 'old'"):
         shared.set_variable("o/r", "X", "new")
 
 

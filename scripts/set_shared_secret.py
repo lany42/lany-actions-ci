@@ -7,19 +7,14 @@ import argparse
 import getpass
 import json
 import re
-import subprocess
 import sys
 import warnings
 from pathlib import Path
 
+from gh_repos import RepoError, gh, read_repos
+
 # GitHub's naming rules for secrets and variables; it stores names as uppercase.
 NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
-# gh accepts [HOST/]OWNER/REPO; a bare REPO is qualified with the owner.
-REPO = re.compile(r"[^\s/-][^\s/]*(?:/[^\s/]+){0,2}")
-
-
-class SettingError(Exception):
-    """A failed gh call or readback must be reported, never assumed to work."""
 
 
 def setting_name(value):
@@ -30,36 +25,6 @@ def setting_name(value):
             "and not start with a digit or GITHUB_"
         )
     return name
-
-
-def gh(*args, stdin=None):
-    # Values travel on stdin so they never appear in the process list.
-    try:
-        result = subprocess.run(
-            ["gh", *args], input=stdin, capture_output=True, text=True, check=False
-        )
-    except OSError as exc:
-        raise SettingError(f"Cannot run gh: {exc}") from exc
-    if result.returncode:
-        raise SettingError(result.stderr.strip() or f"gh exited {result.returncode}")
-    return result.stdout
-
-
-def read_repos(path, owner=None):
-    names = []
-    for line in Path(path).read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if REPO.fullmatch(line) is None:
-            raise SettingError(f"Invalid repository: {line!r}")
-        names.append(line)
-    if not names:
-        raise SettingError(f"{path} lists no repositories")
-    if owner is None and any("/" not in name for name in names):
-        owner = gh("api", "user", "--jq", ".login").strip()
-    repos = [name if "/" in name else f"{owner}/{name}" for name in names]
-    return list(dict.fromkeys(repos))
 
 
 def secret_updated_at(repo, name):
@@ -75,9 +40,9 @@ def set_secret(repo, name, value):
     gh("secret", "set", name, "--repo", repo, stdin=value)
     after = secret_updated_at(repo, name)
     if after is None:
-        raise SettingError("secret is missing after it was set")
+        raise RepoError("secret is missing after it was set")
     if after == before:
-        raise SettingError(f"secret is unchanged since {before}")
+        raise RepoError(f"secret is unchanged since {before}")
     return f"updated at {after}"
 
 
@@ -85,7 +50,7 @@ def set_variable(repo, name, value):
     gh("variable", "set", name, "--repo", repo, stdin=value)
     actual = json.loads(gh("variable", "get", name, "--repo", repo, "--json", "value"))
     if actual.get("value") != value:
-        raise SettingError(f"variable reads back {actual.get('value')!r}")
+        raise RepoError(f"variable reads back {actual.get('value')!r}")
     return f"reads back {value!r}"
 
 
@@ -97,13 +62,13 @@ def read_value(args):
             try:
                 value = getpass.getpass(f"{args.name} (input hidden): ")
             except getpass.GetPassWarning as exc:
-                raise SettingError("A terminal is needed to hide the secret") from exc
+                raise RepoError("A terminal is needed to hide the secret") from exc
     elif args.value is None:
         value = input(f"{args.name}: ")
     else:
         value = args.value
     if not value:
-        raise SettingError("Refusing to set an empty value")
+        raise RepoError("Refusing to set an empty value")
     return value
 
 
@@ -135,7 +100,7 @@ def main(argv=None):
         repos = read_repos(args.repos, args.owner)
         print(f"Setting {kind} {args.name} on:", *repos, sep="\n  ", flush=True)
         value = read_value(args)
-    except (SettingError, OSError) as exc:
+    except (RepoError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except (EOFError, KeyboardInterrupt):
@@ -146,7 +111,7 @@ def main(argv=None):
     for repo in repos:
         try:
             print(f"ok      {repo}: {update(repo, args.name, value)}")
-        except SettingError as exc:
+        except RepoError as exc:
             failed.append(repo)
             print(f"FAILED  {repo}: {exc}", file=sys.stderr)
     print(f"Set {kind} {args.name} on {len(repos) - len(failed)} of {len(repos)}.")
