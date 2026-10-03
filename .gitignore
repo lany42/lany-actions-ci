@@ -1,3 +1,12 @@
+mirrors.txt
+
+# Python-generated files
 __pycache__/
 *.py[oc]
+
+# Virtual environments
+.venv
+
+# Local verification caches
+.pytest_cache/
 .ruff_cache/

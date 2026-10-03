@@ -4,16 +4,29 @@ If a push is requested, only push to `origin`. Never push to a mirror remote unl
 
 Other repositories pin these actions by commit SHA from the GitHub mirror.
 Pass action inputs to scripts through `env`, never by expanding `${{ }}`
-inside `run`. Run from the repository root:
+inside `run`.
+
+Scripts in `actions/` and `scripts/` run standalone with `python3`. Keep
+them on the standard library and compatible with Python 3.12, the system
+interpreter on ubuntu-24.04 runners. The uv workspace holds only
+development tools, and tests live in `tests/`.
+
+Run from the repository root. Use the Python version in `.python-version`
+and uv; `uv sync --locked` installs the development environment. Update
+`pyproject.toml` and `uv.lock` together. Install the `actionlint` binary
+from its GitHub releases rather than a Python wrapper. After changes, run
+these checks in order:
 
 ```sh
-uvx ruff check --fix .
-uvx ruff format .
-python3 -m unittest discover -s actions/registry-publish
-uvx --from actionlint-py actionlint
+uv run --offline --locked ruff check --fix .
+uv run --offline --locked ruff format .
+uv run --offline --locked ruff check .
+uv run --offline --locked pytest
+actionlint
+uv lock --check
 ```
 
-Every Python source starts with:
+Every Python source and test starts with:
 
 ```python
 # SPDX-License-Identifier: AGPL-3.0-only

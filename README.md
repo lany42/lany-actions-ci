@@ -125,3 +125,21 @@ This repository mirrors itself with `.github/workflows/mirror.yml`, so it
 needs a public GitHub repository and the same bootstrap as any other mirror.
 That means adding it to the `REPO_MIRROR` PAT's repositories, adding the
 secret and the `MIRROR_ENABLED` variable, and making one initial seed push.
+
+## Shared secrets
+
+Regenerating a PAT invalidates its old value, so every consumer needs the
+new one. List the repositories one per line, as `OWNER/REPO` or as a bare
+`REPO` owned by the `gh` account, then set the secret everywhere:
+
+```sh
+python3 scripts/set_shared_secret.py --repos mirrors.txt --name REPO_MIRROR
+python3 scripts/set_shared_secret.py --repos mirrors.txt --name MIRROR_ENABLED \
+  --variable --value true
+```
+
+The secret is read from a hidden prompt and passed to `gh` on standard input.
+GitHub never returns secret values, so each secret is verified by checking
+that its `updatedAt` changed. Variables are verified by reading their values
+back. The script continues past failures, then exits non-zero if any
+repository failed.

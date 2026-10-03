@@ -1,0 +1,34 @@
+[project]
+name = "lany-actions-ci"
+version = "0.0.0"
+description = "Shared GitHub Actions and scripts for mirrored repositories."
+# ubuntu-24.04 runners execute the action scripts with the system python3 (3.12).
+requires-python = ">=3.12"
+# Scripts run standalone with python3, so they use only the standard library.
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9,<10",
+    "ruff>=0.16.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = []
+
+[tool.pytest]
+testpaths = ["tests"]
+# Tests import each standalone script from the directory it runs in.
+pythonpath = ["actions/registry-publish", "scripts"]
+addopts = ["--import-mode=importlib"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = [".", "actions/registry-publish", "scripts"]
+
+[tool.ruff.lint]
+extend-select = ["I"]
