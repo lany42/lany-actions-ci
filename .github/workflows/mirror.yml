@@ -1,0 +1,33 @@
+name: Mirror canonical repository
+
+# Publishes these actions to GitHub, where other repositories reference them.
+# Enable MIRROR_ENABLED only after origin contains every intended commit and tag.
+# REPO_MIRROR is a fine-grained PAT with Contents/Workflows write access to this mirror.
+on:
+  schedule:
+    - cron: "53 */6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: canonical-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: ${{ github.repository == 'lany42/lany-actions-ci' && vars.MIRROR_ENABLED == 'true' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the mirror action
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Mirror canonical repository
+        uses: ./actions/mirror
+        with:
+          canonical-url: https://git.colorized.life/lany-actions-ci.git
+          token: ${{ secrets.REPO_MIRROR }}

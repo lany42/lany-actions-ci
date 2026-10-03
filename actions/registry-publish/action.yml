@@ -1,0 +1,40 @@
+name: Publish to Comfy registry
+description: >-
+  Publish a version tag to the Comfy registry when it is newer than every
+  registry version. Checks out the repository into the workspace.
+
+inputs:
+  tag:
+    description: Tag to publish; empty selects the highest vX.Y.Z[-rcN] tag.
+    default: ""
+  token:
+    description: REGISTRY_ACCESS_TOKEN secret, a registry publishing key.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check out all tags
+      uses: actions/checkout@v7
+      with:
+        path: workflow
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Compare candidate with the Comfy registry
+      id: candidate
+      shell: bash
+      env:
+        REQUESTED_TAG: ${{ inputs.tag }}
+      run: python3 "$GITHUB_ACTION_PATH/registry_publish.py" --repo workflow --tag "$REQUESTED_TAG"
+    - name: Check out the selected release commit
+      if: steps.candidate.outputs.publish == 'true'
+      uses: actions/checkout@v7
+      with:
+        ref: ${{ steps.candidate.outputs.commit }}
+        persist-credentials: false
+    - name: Publish Custom Node
+      if: steps.candidate.outputs.publish == 'true'
+      uses: Comfy-Org/publish-node-action@main
+      with:
+        skip_checkout: 'true'
+        personal_access_token: ${{ inputs.token }}

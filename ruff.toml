@@ -1,0 +1,6 @@
+# ubuntu-24.04 runners execute these scripts with the system python3 (3.12).
+target-version = "py312"
+line-length = 88
+
+[lint]
+extend-select = ["I"]
