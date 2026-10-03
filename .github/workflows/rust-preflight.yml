@@ -1,0 +1,151 @@
+name: Rust preflight
+
+# Reusable workflow for the checks that come before `cargo publish`. Callers
+# pin it by commit SHA from the GitHub mirror and run it on workflow_dispatch.
+on:
+  workflow_call:
+    inputs:
+      freestanding-target:
+        description: >-
+          Target without std, such as thumbv7em-none-eabi. The library is
+          checked, built and linted for it with and without default features.
+          Empty skips the target.
+        type: string
+        default: ""
+      miri-script:
+        description: >-
+          Executable script, relative to the repository root, that runs Miri
+          on nightly, such as scripts/test-miri. Empty skips Miri.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  host:
+    name: ${{ matrix.toolchain }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, nightly]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the latest Rust ${{ matrix.toolchain }}
+        id: toolchain
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          # A nightly without clippy or rustfmt falls back to the newest with both.
+          rustup toolchain install "$TOOLCHAIN" --profile minimal \
+            --component clippy,rustfmt --allow-downgrade --no-self-update
+          # RUSTUP_TOOLCHAIN overrides any rust-toolchain.toml in the repository.
+          echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+          rustup run "$TOOLCHAIN" rustc --version --verbose
+      # Each check runs even after another fails, so one run reports them all.
+      - name: Test
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo test --locked
+      - name: Test without default features
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo test --locked --no-default-features
+      - name: Clippy
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Clippy without default features
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
+      - name: Rustfmt
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo fmt --all -- --check
+      - name: Rustdoc with all features
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --all-features
+      # Packages the crate and builds it from the package, without uploading.
+      - name: Publish dry run
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo publish --dry-run --locked
+
+  freestanding:
+    name: ${{ matrix.toolchain }} ${{ inputs.freestanding-target }}
+    if: ${{ inputs.freestanding-target != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, nightly]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TARGET: ${{ inputs.freestanding-target }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the latest Rust ${{ matrix.toolchain }} for ${{ inputs.freestanding-target }}
+        id: toolchain
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal \
+            --component clippy --target "$TARGET" --allow-downgrade --no-self-update
+          echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+          rustup run "$TOOLCHAIN" rustc --version --verbose
+      # Without --all-targets only the library builds; tests and benches need std.
+      - name: Check
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo check --locked --target "$TARGET"
+      - name: Check without default features
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo check --locked --target "$TARGET" --no-default-features
+      - name: Release build
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo build --locked --release --target "$TARGET"
+      - name: Release build without default features
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo build --locked --release --target "$TARGET" --no-default-features
+      - name: Clippy
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --target "$TARGET" -- -D warnings
+      - name: Clippy without default features
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --target "$TARGET" --no-default-features -- -D warnings
+
+  miri:
+    name: nightly miri
+    if: ${{ inputs.miri-script != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the latest Rust nightly with Miri
+        run: |
+          # A nightly without Miri falls back to the newest one that has it.
+          rustup toolchain install nightly --profile minimal --component miri \
+            --allow-downgrade --no-self-update
+          echo "RUSTUP_TOOLCHAIN=nightly" >> "$GITHUB_ENV"
+          rustup run nightly rustc --version --verbose
+      # Miri's README sets up its sysroot separately to keep the test log clean.
+      - name: Set up Miri
+        run: cargo miri setup
+      - name: Run ${{ inputs.miri-script }}
+        env:
+          MIRI_SCRIPT: ${{ inputs.miri-script }}
+        run: ./"$MIRI_SCRIPT"

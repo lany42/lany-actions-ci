@@ -3,10 +3,11 @@
 Shared GitHub Actions for repositories hosted canonically on
 `git.colorized.life`. GitHub serves only as a public mirror and free CI.
 
-| Action | Purpose |
+| Reference | Purpose |
 | --- | --- |
 | `lany42/lany-actions-ci/actions/mirror` | Anonymously fetch canonical branches and tags. Update the GitHub mirror with the `REPO_MIRROR` PAT, verify it, then optionally dispatch a workflow. |
 | `lany42/lany-actions-ci/actions/registry-publish` | Publish the highest (or a selected) `vX.Y.Z[-rcN]` tag to the Comfy registry when it is newer than every registry version. |
+| `lany42/lany-actions-ci/.github/workflows/rust-preflight.yml` | Reusable workflow that runs the checks to pass before `cargo publish` on the latest stable and nightly Rust, optionally for a target without std and under Miri. |
 
 ## Install
 
@@ -107,6 +108,50 @@ selected release commit at the workspace root and publishes it with
 action, not from the repository being published.
 
 When migrating from copied workflows, delete `.github/scripts/`.
+
+## Rust preflight
+
+In a Rust repository, set `dispatch-workflow: preflight.yml` in `mirror.yml`
+and call the reusable workflow:
+
+### `.github/workflows/preflight.yml`
+
+```yaml
+name: Rust preflight
+
+# The mirror dispatches this workflow on main after a verified synchronization.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-preflight
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    uses: lany42/lany-actions-ci/.github/workflows/rust-preflight.yml@COMMIT_SHA
+    with:
+      freestanding-target: thumbv7em-none-eabi # omit for crates that need std
+      miri-script: scripts/test-miri # omit without a Miri script
+```
+
+| Job | Checks |
+| --- | --- |
+| `stable`, `nightly` | `cargo test` and `cargo clippy --all-targets -- -D warnings`, with and without default features. `cargo fmt --all -- --check`, `cargo doc --no-deps --all-features` with warnings denied, and `cargo publish --dry-run`. |
+| `stable TARGET`, `nightly TARGET` | `cargo check`, `cargo build --release` and `cargo clippy -- -D warnings` of the library for `freestanding-target`, with and without default features. |
+| `nightly miri` | `cargo miri setup`, then `miri-script` with nightly active. |
+
+Each job installs the latest toolchain with rustup, overriding any
+`rust-toolchain.toml`. Nightly falls back to the newest one with every
+component a job needs. Every cargo command passes `--locked`, so `Cargo.lock`
+must be committed and current. A job runs all its checks even after one fails,
+so a single run reports every failure. The default features must build without
+std on the freestanding target. The dry run packages the crate and builds it
+from the package without uploading; it only warns when the version is already
+on crates.io. Publish by hand once every job is green.
 
 ## Update
 
